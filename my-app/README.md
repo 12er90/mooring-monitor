@@ -10,6 +10,9 @@ This is an [Expo](https://expo.dev) project created with [`create-expo-app`](htt
    npm install
    ```
 
+2. Set the IP:
+   Replace the Ip of your device inside myapp/constants/config.ts (can use 'ipconfig' in the cli to get the ipv4 address)
+
 2. Start the app
 
    ```bash

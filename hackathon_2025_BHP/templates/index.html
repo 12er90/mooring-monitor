@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mooring Admin Dashboard</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>⚓ Mooring Admin Dashboard</h1>
+            <p class="subtitle">Real-time Port Monitoring System</p>
+        </header>
+
+        <div class="controls">
+            <button id="generateBtn" class="btn btn-primary">🔄 Generate Port Data</button>
+            <button id="liveUpdateBtn" class="btn btn-secondary" disabled>📡 Enable Live Updates</button>
+            <button id="saveBtn" class="btn btn-success" disabled>💾 Save as JSON</button>
+            <a href="/analysis" id="analysisBtn" class="btn btn-analysis" style="text-decoration: none; display: inline-block; background: #9C27B0; color: white;">📊 Tension Analysis</a>
+        </div>
+
+        <div id="loading" class="loading" style="display: none;">
+            <div class="spinner"></div>
+            <p>Loading port data...</p>
+        </div>
+
+        <div id="portOverview" class="port-overview" style="display: none;">
+            <h2 id="portName">Port Name</h2>
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-icon">🚢</div>
+                    <div class="stat-value" id="totalBerths">0</div>
+                    <div class="stat-label">Total Berths</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon">⚓</div>
+                    <div class="stat-value" id="totalBollards">0</div>
+                    <div class="stat-label">Total Bollards</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon">🪝</div>
+                    <div class="stat-value" id="totalHooks">0</div>
+                    <div class="stat-label">Total Hooks</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon">⚡</div>
+                    <div class="stat-value" id="activeHooks">0</div>
+                    <div class="stat-label">Active Hooks</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon">⚠️</div>
+                    <div class="stat-value" id="faultedHooks">0</div>
+                    <div class="stat-label">Faulted Hooks</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon">📊</div>
+                    <div class="stat-value" id="totalTension">0</div>
+                    <div class="stat-label">Total Tension Analysis</div>
+                </div>
+            </div>
+        </div>
+
+        <div id="berthsContainer" class="berths-container"></div>
+    </div>
+
+    <script>
+        let currentPortData = null;
+        let liveUpdateInterval = null;
+        let isLiveUpdateEnabled = false;
+
+        const generateBtn = document.getElementById('generateBtn');
+        const liveUpdateBtn = document.getElementById('liveUpdateBtn');
+        const saveBtn = document.getElementById('saveBtn');
+        const loading = document.getElementById('loading');
+        const portOverview = document.getElementById('portOverview');
+        const berthsContainer = document.getElementById('berthsContainer');
+
+        // Check if port data exists on page load
+        window.addEventListener('DOMContentLoaded', async () => {
+            try {
+                const response = await fetch('/api/port/statistics');
+                if (response.ok) {
+                    // Port data exists, load it
+                    await loadFullPortData();
+                    liveUpdateBtn.disabled = false;
+                    saveBtn.disabled = false;
+                    
+                    // Check if live update was enabled before
+                    const liveUpdateState = localStorage.getItem('liveUpdateEnabled');
+                    if (liveUpdateState === 'true') {
+                        // Re-enable live updates
+                        liveUpdateBtn.click();
+                    }
+                }
+            } catch (error) {
+                // No data available, user needs to generate
+                console.log('No port data available');
+            }
+        });
+
+        // Generate Port Data
+        generateBtn.addEventListener('click', async () => {
+            showLoading();
+            try {
+                const response = await fetch('/api/port');
+                const data = await response.json();
+                await loadFullPortData();
+                liveUpdateBtn.disabled = false;
+                saveBtn.disabled = false;
+            } catch (error) {
+                console.error('Error generating port data:', error);
+                alert('Failed to generate port data');
+            }
+            hideLoading();
+        });
+
+        // Live Update Mode Toggle
+        liveUpdateBtn.addEventListener('click', async () => {
+            if (!isLiveUpdateEnabled) {
+                // Enable live updates
+                isLiveUpdateEnabled = true;
+                liveUpdateBtn.textContent = '⏸️ Pause Live Updates';
+                liveUpdateBtn.classList.remove('btn-secondary');
+                liveUpdateBtn.classList.add('btn-warning');
+                
+                // Save state to localStorage
+                localStorage.setItem('liveUpdateEnabled', 'true');
+                
+                // Start auto-update every 1.5 seconds
+                liveUpdateInterval = setInterval(async () => {
+                    try {
+                        await fetch('/api/port/update', { method: 'POST' });
+                        await loadFullPortData(true); // Pass true for silent update
+                    } catch (error) {
+                        console.error('Error during live update:', error);
+                    }
+                }, 1500);
+                
+                // Show notification
+                showNotification('Live updates enabled - refreshing every 2 seconds');
+            } else {
+                // Disable live updates
+                isLiveUpdateEnabled = false;
+                liveUpdateBtn.textContent = '📡 Enable Live Updates';
+                liveUpdateBtn.classList.remove('btn-warning');
+                liveUpdateBtn.classList.add('btn-secondary');
+                
+                // Save state to localStorage
+                localStorage.setItem('liveUpdateEnabled', 'false');
+                
+                if (liveUpdateInterval) {
+                    clearInterval(liveUpdateInterval);
+                    liveUpdateInterval = null;
+                }
+                
+                // Show notification
+                showNotification('Live updates paused');
+            }
+        });
+
+        // Save as JSON
+        saveBtn.addEventListener('click', async () => {
+            try {
+                const response = await fetch('/api/port/download');
+                const data = await response.json();
+                currentPortData = data;
+                
+                // Create blob and download
+                const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `mooring_data_${data.port_name}_${new Date().getTime()}.json`;
+                document.body.appendChild(a);
+                a.click();
+                window.URL.revokeObjectURL(url);
+                document.body.removeChild(a);
+            } catch (error) {
+                console.error('Error saving JSON:', error);
+                alert('Failed to save JSON data');
+            }
+        });
+
+        async function loadFullPortData(silent = false) {
+            try {
+                // Get statistics
+                const statsResponse = await fetch('/api/port/statistics');
+                const stats = await statsResponse.json();
+                
+                // Get berths data
+                const berthsResponse = await fetch('/api/port/berths');
+                const berthsData = await berthsResponse.json();
+                
+                displayPortOverview(stats);
+                displayBerths(berthsData.berths);
+                
+                // Show subtle update indicator for silent updates
+                if (silent) {
+                    showUpdateIndicator();
+                }
+            } catch (error) {
+                console.error('Error loading port data:', error);
+            }
+        }
+
+        function showNotification(message) {
+            const notification = document.createElement('div');
+            notification.style.cssText = `
+                position: fixed;
+                top: 20px;
+                right: 20px;
+                background: #4CAF50;
+                color: white;
+                padding: 15px 25px;
+                border-radius: 8px;
+                box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+                z-index: 10000;
+                animation: slideIn 0.3s ease;
+            `;
+            notification.textContent = message;
+            document.body.appendChild(notification);
+            
+            setTimeout(() => {
+                notification.style.animation = 'slideOut 0.3s ease';
+                setTimeout(() => notification.remove(), 300);
+            }, 2500);
+        }
+
+        function showUpdateIndicator() {
+            const indicator = document.createElement('div');
+            indicator.style.cssText = `
+                position: fixed;
+                top: 20px;
+                right: 20px;
+                background: rgba(33, 150, 243, 0.9);
+                color: white;
+                padding: 8px 15px;
+                border-radius: 20px;
+                font-size: 0.85em;
+                z-index: 10000;
+                animation: fadeInOut 1s ease;
+            `;
+            indicator.textContent = '🔄 Updated';
+            document.body.appendChild(indicator);
+            
+            setTimeout(() => indicator.remove(), 1000);
+        }
+
+        function displayPortOverview(stats) {
+            document.getElementById('portName').textContent = `🏭 ${stats.port_name}`;
+            document.getElementById('totalBerths').textContent = stats.total_berths;
+            document.getElementById('totalBollards').textContent = stats.total_bollards;
+            document.getElementById('totalHooks').textContent = stats.total_hooks;
+            document.getElementById('activeHooks').textContent = stats.active_hooks;
+            document.getElementById('faultedHooks').textContent = stats.faulted_hooks;
+            document.getElementById('totalTension').textContent = stats.total_tension.toFixed(1);
+            
+            portOverview.style.display = 'block';
+        }
+
+        function displayBerths(berths) {
+            berthsContainer.innerHTML = '';
+            
+            berths.forEach(berth => {
+                const berthCard = document.createElement('div');
+                berthCard.className = 'berth-card';
+                
+                const activeRadars = berth.radars.filter(r => r.status === 'ACTIVE').length;
+                const activeHooks = berth.bollards.reduce((sum, b) => 
+                    sum + b.hooks.filter(h => h.attached_line).length, 0);
+                const faultedHooks = berth.bollards.reduce((sum, b) => 
+                    sum + b.hooks.filter(h => h.faulted).length, 0);
+                
+                berthCard.innerHTML = `
+                    <div class="berth-header">
+                        <h3>${berth.name}</h3>
+                        ${berth.ship ? `<div class="ship-badge">🚢 ${berth.ship.name}</div>` : '<div class="ship-badge empty">No Ship</div>'}
+                    </div>
+                    
+                    <div class="berth-info">
+                        <div class="info-item">
+                            <span class="label">Vessel ID:</span>
+                            <span class="value">${berth.ship ? berth.ship.vessel_id : 'N/A'}</span>
+                        </div>
+                        <div class="info-item">
+                            <span class="label">Bollards:</span>
+                            <span class="value">${berth.bollard_count}</span>
+                        </div>
+                        <div class="info-item">
+                            <span class="label">Hooks:</span>
+                            <span class="value">${berth.hook_count}</span>
+                        </div>
+                        <div class="info-item">
+                            <span class="label">Active Radars:</span>
+                            <span class="value">${activeRadars}/${berth.radars.length}</span>
+                        </div>
+                    </div>
+
+                    <div class="radars-section">
+                        <h4>📡 Radars</h4>
+                        <div class="radars-grid">
+                            ${berth.radars.map(radar => `
+                                <div class="radar-item ${radar.status === 'ACTIVE' ? 'active' : 'inactive'}">
+                                    <div class="radar-name">${radar.name}</div>
+                                    <div class="radar-distance">${radar.ship_distance !== null ? radar.ship_distance.toFixed(2) + 'm' : 'N/A'}</div>
+                                    <div class="radar-change">${radar.distance_change !== null ? '±' + radar.distance_change.toFixed(2) + 'm' : ''}</div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+
+                    <div class="bollards-section">
+                        <h4>⚓ Bollards & Hooks</h4>
+                        <div class="bollards-grid">
+                            ${berth.bollards.map(bollard => `
+                                <div class="bollard-item">
+                                    <div class="bollard-name">${bollard.name}</div>
+                                    <div class="hooks-list">
+                                        ${bollard.hooks.map(hook => {
+                                            let hookClass = 'hook-item';
+                                            let tensionClass = '';
+                                            let tensionLevel = '';
+                                            
+                                            if (hook.faulted) {
+                                                hookClass += ' faulted';
+                                            } else if (hook.tension !== null) {
+                                                if (hook.tension >= 0 && hook.tension <= 39) {
+                                                    tensionClass = 'tension-safe';
+                                                    tensionLevel = 'Safe';
+                                                } else if (hook.tension >= 40 && hook.tension <= 69) {
+                                                    tensionClass = 'tension-attention';
+                                                    tensionLevel = 'Attention';
+                                                } else if (hook.tension >= 70 && hook.tension <= 85) {
+                                                    tensionClass = 'tension-dangerous';
+                                                    tensionLevel = 'Dangerous';
+                                                } else if (hook.tension >= 86 && hook.tension <= 99) {
+                                                    tensionClass = 'tension-critical';
+                                                    tensionLevel = 'Critical';
+                                                }
+                                                hookClass += ` ${tensionClass}`;
+                                            }
+                                            
+                                            if (hook.attached_line) hookClass += ' active';
+                                            
+                                            return `
+                                                <div class="${hookClass}" title="${hook.name} - Tension: ${hook.tension !== null ? Math.round(hook.tension) + 'T (' + tensionLevel + ')' : 'N/A'}">
+                                                    <span class="hook-name">${hook.name.replace('Hook ', 'H')}</span>
+                                                    ${!hook.faulted && hook.tension !== null ? `<span class="hook-tension ${tensionClass}">${Math.round(hook.tension)}T</span>` : ''}
+                                                    ${!hook.faulted && hook.tension === null ? '<span class="hook-no-tension">-</span>' : ''}
+                                                    ${hook.attached_line ? `<span class="hook-line">${hook.attached_line}</span>` : ''}
+                                                    ${hook.faulted ? '<span class="hook-fault">⚠️ FAULT</span>' : ''}
+                                                </div>
+                                            `;
+                                        }).join('')}
+                                    </div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+
+                    <div class="berth-summary">
+                        <span class="summary-badge ${activeHooks > 0 ? 'success' : 'warning'}">
+                            ✓ ${activeHooks} Active Hooks
+                        </span>
+                        ${faultedHooks > 0 ? `<span class="summary-badge error">⚠️ ${faultedHooks} Faulted</span>` : ''}
+                    </div>
+                `;
+                
+                berthsContainer.appendChild(berthCard);
+            });
+        }
+
+        function showLoading() {
+            loading.style.display = 'flex';
+            generateBtn.disabled = true;
+            liveUpdateBtn.disabled = true;
+        }
+
+        function hideLoading() {
+            loading.style.display = 'none';
+            generateBtn.disabled = false;
+            if (currentPortData !== null || portOverview.style.display === 'block') {
+                liveUpdateBtn.disabled = false;
+            }
+        }
+    </script>
+    <style>
+        @keyframes slideIn {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+        @keyframes slideOut {
+            from { transform: translateX(0); opacity: 1; }
+            to { transform: translateX(100%); opacity: 0; }
+        }
+        @keyframes fadeInOut {
+            0%, 100% { opacity: 0; }
+            50% { opacity: 1; }
+        }
+        .btn-warning {
+            background: #FFC107 !important;
+            color: #333 !important;
+        }
+    </style>
+</body>
+</html>
